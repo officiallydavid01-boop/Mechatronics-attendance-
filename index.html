@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mechatronics Attendance System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Smooth transitions for a better mobile feel */
+        .fade-in { animation: fadeIn 0.5s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans min-h-screen">
+
+    <nav class="bg-blue-900 p-4 text-white flex justify-between items-center shadow-lg sticky top-0 z-50">
+        <div>
+            <h1 class="font-bold text-lg leading-tight">MECH Dept</h1>
+            <p id="session-indicator" class="text-xs text-blue-200 italic"></p>
+        </div>
+        <button id="nav-btn" class="text-sm bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-lg transition-all font-semibold">Admin Login</button>
+    </nav>
+
+    <div id="student-section" class="p-4 md:p-8 fade-in">
+        <div class="bg-white p-6 md:p-8 rounded-2xl shadow-xl max-w-md mx-auto border-t-8 border-green-500">
+            <h2 id="form-title" class="text-2xl font-bold mb-2 text-gray-800">Class Attendance</h2>
+            <p class="text-gray-500 mb-6 text-sm">Please provide your details accurately.</p>
+            
+            <div id="form-container" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">Full Name</label>
+                    <input type="text" id="studentName" placeholder="Surname First Name" class="w-full border-2 border-gray-200 p-3 rounded-xl focus:border-green-500 focus:ring-2 focus:ring-green-200 outline-none transition-all">
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">Matric Number</label>
+                    <input type="text" id="matricNo" placeholder="MECH/20XX/XXX" class="w-full border-2 border-gray-200 p-3 rounded-xl focus:border-green-500 focus:ring-2 focus:ring-green-200 outline-none transition-all font-mono">
+                </div>
+                
+                <button id="submitBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-xl transition shadow-lg active:transform active:scale-95">
+                    Submit Presence
+                </button>
+            </div>
+            
+            <div id="msg" class="mt-4 p-4 rounded-xl text-center hidden"></div>
+        </div>
+    </div>
+
+    <div id="admin-section" class="p-4 md:p-8 hidden fade-in">
+        <div class="bg-white p-6 md:p-8 rounded-2xl shadow-xl max-w-4xl mx-auto border-t-8 border-blue-900">
+            <h2 class="text-2xl font-bold mb-6 text-gray-800">Admin Dashboard</h2>
+            
+            <div id="admin-auth" class="max-w-xs mx-auto text-center py-10">
+                <label class="block text-sm font-bold text-gray-600 mb-2 text-left">Admin Access Key</label>
+                <input type="password" id="adminPass" placeholder="••••••••" class="w-full border-2 p-3 mb-4 rounded-xl outline-none focus:border-blue-900">
+                <button id="loginBtn" class="w-full bg-blue-900 text-white py-3 rounded-xl font-bold hover:bg-black transition">Verify Identity</button>
+            </div>
+            
+            <div id="admin-controls" class="hidden space-y-8">
+                
+                <div class="bg-blue-50 p-6 rounded-2xl border-2 border-blue-100">
+                    <h3 class="font-bold text-blue-900 mb-3 flex items-center">
+                        <span class="mr-2 text-xl">🔗</span> Create Attendance Link
+                    </h3>
+                    <div class="flex flex-col md:flex-row gap-3">
+                        <input type="text" id="className" placeholder="Course Code (e.g., MEE312)" class="flex-grow border-2 p-3 rounded-xl outline-none focus:border-blue-500 font-semibold uppercase">
+                        <button id="genLinkBtn" class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-6 py-3 rounded-xl shadow transition whitespace-nowrap">
+                            Generate & Copy
+                        </button>
+                    </div>
+                    <div id="shareLinkContainer" class="mt-4 p-3 bg-white rounded-lg border border-dashed border-blue-300 hidden">
+                        <p class="text-[10px] uppercase font-bold text-gray-400 mb-1">Share this link with students:</p>
+                        <p id="shareLink" class="text-blue-600 text-sm break-all font-mono font-medium"></p>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
+                        <h3 class="font-bold text-xl text-gray-700">Live Attendance List</h3>
+                        <div class="flex gap-2 w-full md:w-auto">
+                            <button id="downloadBtn" class="flex-1 md:flex-none bg-green-700 hover:bg-green-800 text-white px-4 py-2 rounded-lg font-semibold text-sm transition">📥 Excel (CSV)</button>
+                            <button id="clearBtn" class="flex-1 md:flex-none bg-red-100 hover:bg-red-600 hover:text-white text-red-600 px-4 py-2 rounded-lg font-semibold text-sm transition">🗑️ Clear Data</button>
+                        </div>
+                    </div>
+                    
+                    <div class="overflow-x-auto rounded-xl border border-gray-200">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-gray-100 text-gray-600 text-xs uppercase tracking-wider">
+                                    <th class="p-4 border-b font-bold">Student Name</th>
+                                    <th class="p-4 border-b font-bold">Matric Number</th>
+                                    <th class="p-4 border-b font-bold">Time Logged</th>
+                                </tr>
+                            </thead>
+                            <tbody id="attendance-list" class="text-gray-700 divide-y divide-gray-100">
+                                </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="admin.js"></script>
+</body>
+</html>
+
+
