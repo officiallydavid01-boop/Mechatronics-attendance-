@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getDatabase, ref, push, set, onValue, remove } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+import { getDatabase, ref, push, onValue, remove, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
-// 1. YOUR FIREBASE CONFIG
+// --- CONFIGURATION (Ensure your API Keys are correct) ---
 const firebaseConfig = {
   apiKey: "AIzaSyDEG1jzD0Kdhi8CC6Sx8p1vo0LaRyZ4OcU",
   authDomain: "mechatronics-attendance.firebaseapp.com",
@@ -13,174 +13,156 @@ const firebaseConfig = {
   measurementId: "G-18FRFN7P22"
 };
 
-// Initialize
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
-// --- GLOBAL VARIABLES ---
+// URL Parameter Handling
 const urlParams = new URLSearchParams(window.location.search);
-const currentSession = urlParams.get('session'); // Get session from URL
+const currentSession = urlParams.get('session');
+const targetLat = parseFloat(urlParams.get('lat'));
+const targetLon = parseFloat(urlParams.get('lon'));
+const expiryTime = parseInt(urlParams.get('exp')); // New: Expiry timestamp
 let attendanceData = [];
 
-// --- INITIAL UI SETUP ---
-window.addEventListener('DOMContentLoaded', () => {
-    const sessionIndicator = document.getElementById('session-indicator');
-    const formTitle = document.getElementById('form-title');
-    const formContainer = document.getElementById('form-container');
+// --- UTILITY: MATH & DISTANCE ---
+function calculateDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371e3; // Earth radius in meters
+    const phi1 = lat1 * Math.PI/180;
+    const phi2 = lat2 * Math.PI/180;
+    const dPhi = (lat2-lat1) * Math.PI/180;
+    const dLambda = (lon2-lon1) * Math.PI/180;
+    const a = Math.sin(dPhi/2) * Math.sin(dPhi/2) +
+              Math.cos(phi1) * Math.cos(phi2) *
+              Math.sin(dLambda/2) * Math.sin(dLambda/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return Math.round(R * c); 
+}
 
-    if (currentSession) {
-        // We are in a specific class
-        const cleanName = currentSession.replace(/_/g, " ");
-        sessionIndicator.innerText = "Current Session: " + cleanName;
-        formTitle.innerText = cleanName + " Attendance";
-    } else {
-        // No session selected
-        formContainer.innerHTML = `
-            <div class="p-4 bg-yellow-50 border-2 border-yellow-200 rounded-xl text-yellow-800 text-sm">
-                <strong>No Active Session:</strong> Please click the specific link provided by your lecturer to mark attendance.
-            </div>
-        `;
-    }
-});
-
-// --- NAVIGATION / VIEW TOGGLE ---
+// --- ADMIN LOGIC ---
 document.getElementById('nav-btn').onclick = () => {
-    const studentSec = document.getElementById('student-section');
-    const adminSec = document.getElementById('admin-section');
-    const navBtn = document.getElementById('nav-btn');
-
-    if (adminSec.classList.contains('hidden')) {
-        studentSec.classList.add('hidden');
-        adminSec.classList.remove('hidden');
-        navBtn.innerText = "Back to Form";
+    const sSec = document.getElementById('student-section');
+    const aSec = document.getElementById('admin-section');
+    const btn = document.getElementById('nav-btn');
+    if (aSec.classList.contains('hidden')) {
+        sSec.classList.add('hidden'); aSec.classList.remove('hidden');
+        btn.innerText = "Back to Form";
     } else {
-        adminSec.classList.add('hidden');
-        studentSec.classList.remove('hidden');
-        navBtn.innerText = "Admin Login";
+        aSec.classList.add('hidden'); sSec.classList.remove('hidden');
+        btn.innerText = "Admin Login";
     }
 };
 
-// --- STUDENT SUBMISSION ---
-document.getElementById('submitBtn').onclick = () => {
-    if (!currentSession) {
-        alert("Cannot submit without a valid session link!");
-        return;
-    }
-
-    const name = document.getElementById('studentName').value.trim();
-    const matric = document.getElementById('matricNo').value.trim();
-    const time = new Date().toLocaleString();
-
-    if (!name || !matric) {
-        alert("Please enter both Name and Matric Number.");
-        return;
-    }
-
-    // Save to sessions/SESSION_NAME/attendance
-    const sessionRef = ref(db, `sessions/${currentSession}/attendance`);
-    const newEntry = push(sessionRef);
-
-    set(newEntry, { name, matric, time })
-        .then(() => {
-            document.getElementById('form-container').classList.add('hidden');
-            const msg = document.getElementById('msg');
-            msg.innerHTML = `✅ <strong>Success!</strong><br>Your attendance for ${currentSession.replace(/_/g, " ")} has been recorded.`;
-            msg.className = "mt-4 p-4 rounded-xl text-center bg-green-100 text-green-800 block border-2 border-green-200";
-        })
-        .catch(err => alert("Error: " + err.message));
-};
-
-// --- ADMIN: LOGIN ---
 document.getElementById('loginBtn').onclick = () => {
-    const pass = document.getElementById('adminPass').value;
-    if (pass === "Mechatronics2026") {
+    if (document.getElementById('adminPass').value === "Mechatronics2024") {
         document.getElementById('admin-auth').classList.add('hidden');
         document.getElementById('admin-controls').classList.remove('hidden');
-        
-        // If the admin is on a session link, load that data immediately
-        if (currentSession) {
-            loadAttendanceData(currentSession);
-        }
-    } else {
-        alert("Unauthorized Access!");
-    }
+        if (currentSession) loadData(currentSession);
+    } else { alert("Access Denied."); }
 };
 
-// --- ADMIN: GENERATE LINK ---
 document.getElementById('genLinkBtn').onclick = () => {
-    const rawName = document.getElementById('className').value.trim();
-    if (!rawName) return alert("Enter a course code or class name!");
+    const val = document.getElementById('className').value.trim();
+    if (!val) return alert("Enter Course Code!");
 
-    // Sanitize: replace spaces with underscores
-    const sessionID = rawName.replace(/\s+/g, '_');
-    
-    // Create the full URL
-    const baseUrl = window.location.protocol + '//' + window.location.host + window.location.pathname;
-    const fullLink = `${baseUrl}?session=${sessionID}`;
-
-    // Display link
-    const container = document.getElementById('shareLinkContainer');
-    const linkEl = document.getElementById('shareLink');
-    container.classList.remove('hidden');
-    linkEl.innerText = fullLink;
-
-    // Copy to clipboard
-    navigator.clipboard.writeText(fullLink).then(() => {
-        alert("Success! Link generated and copied to clipboard.");
-    });
-
-    // Automatically load data for this new session
-    loadAttendanceData(sessionID);
+    navigator.geolocation.getCurrentPosition((pos) => {
+        const sessionID = val.replace(/\s+/g, '_');
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        // Session expires in 20 minutes (1200000ms)
+        const exp = Date.now() + 1200000; 
+        
+        const fullLink = `${window.location.origin}${window.location.pathname}?session=${sessionID}&lat=${lat}&lon=${lon}&exp=${exp}`;
+        
+        document.getElementById('shareLinkContainer').classList.remove('hidden');
+        document.getElementById('shareLink').innerText = fullLink;
+        navigator.clipboard.writeText(fullLink);
+        alert("Encrypted Session Link Created & Copied!");
+    }, () => alert("GPS Required for Admin pinning."), { enableHighAccuracy: true });
 };
 
-// --- ADMIN: LOAD DATA ---
-function loadAttendanceData(sessionID) {
-    const dataRef = ref(db, `sessions/${sessionID}/attendance`);
-    onValue(dataRef, (snapshot) => {
-        const data = snapshot.val();
-        const list = document.getElementById('attendance-list');
-        list.innerHTML = "";
-        attendanceData = [];
+// --- STUDENT SUBMISSION LOGIC ---
+document.getElementById('submitBtn').onclick = () => {
+    const name = document.getElementById('studentName').value.trim();
+    const matric = document.getElementById('matricNo').value.trim();
+    const msg = document.getElementById('msg');
+    
+    // GUARD 1: Expiry Check
+    if (Date.now() > expiryTime) {
+        return alert("This session has expired. Please ask the lecturer for a new link.");
+    }
 
-        if (data) {
-            for (let id in data) {
-                attendanceData.push(data[id]);
-                list.innerHTML += `
-                    <tr class="hover:bg-blue-50 transition border-b">
-                        <td class="p-4 font-medium">${data[id].name}</td>
-                        <td class="p-4 font-mono text-sm text-blue-600">${data[id].matric}</td>
-                        <td class="p-4 text-xs text-gray-500 font-bold">${data[id].time}</td>
-                    </tr>
-                `;
+    // GUARD 2: Device Memory Check (Anti-Proxy)
+    if (localStorage.getItem(`signed_${currentSession}`)) {
+        return alert("Device Lock: You have already submitted for this session.");
+    }
+
+    if (!name || !matric || !currentSession) return alert("Fill all fields!");
+
+    msg.classList.remove('hidden');
+    msg.innerHTML = "Verifying Location & Credentials...";
+
+    navigator.geolocation.getCurrentPosition((pos) => {
+        const distance = calculateDistance(pos.coords.latitude, pos.coords.longitude, targetLat, targetLon);
+        
+        // GUARD 3: Geofence Check (60m)
+        if (distance > 60) {
+            msg.innerHTML = `❌ Access Denied: You are ${distance}m from the hall center.`;
+            msg.className = "mt-4 p-4 rounded-xl text-center bg-red-100 text-red-700";
+            return;
+        }
+
+        // GUARD 4: Database Duplicate Matric Check
+        const sessionRef = ref(db, `sessions/${currentSession}/attendance`);
+        onValue(sessionRef, (snapshot) => {
+            const records = snapshot.val();
+            let isDuplicate = false;
+            if (records) {
+                Object.values(records).forEach(r => { if (r.matric === matric) isDuplicate = true; });
             }
-        } else {
-            list.innerHTML = `<tr><td colspan="3" class="p-8 text-center text-gray-400 italic">No students have signed in for this session yet.</td></tr>`;
+
+            if (isDuplicate) {
+                msg.innerHTML = "❌ Error: This Matric Number is already recorded.";
+                msg.className = "mt-4 p-4 rounded-xl text-center bg-red-100 text-red-700";
+            } else {
+                // Final Success: Push Data
+                push(sessionRef, { name, matric, time: new Date().toLocaleString() })
+                .then(() => {
+                    localStorage.setItem(`signed_${currentSession}`, "true"); // Lock Device
+                    document.getElementById('form-container').classList.add('hidden');
+                    msg.innerHTML = "✅ Identity Verified. Attendance Logged!";
+                    msg.className = "mt-4 p-4 rounded-xl text-center bg-green-50 text-green-700";
+                });
+            }
+        }, { onlyOnce: true });
+    }, () => alert("GPS Permission Denied."), { enableHighAccuracy: true });
+};
+
+// --- DATA LOADING & CSV ---
+function loadData(sessionID) {
+    onValue(ref(db, `sessions/${sessionID}/attendance`), (snap) => {
+        const data = snap.val();
+        const list = document.getElementById('attendance-list');
+        list.innerHTML = ""; attendanceData = [];
+        if (data) {
+            Object.values(data).forEach(item => {
+                attendanceData.push(item);
+                list.innerHTML += `<tr class="border-b"><td class="p-4 font-bold">${item.name}</td><td class="p-4 font-mono text-blue-700">${item.matric}</td><td class="p-4 text-xs text-gray-400">${item.time}</td></tr>`;
+            });
         }
     });
 }
 
-// --- ADMIN: DOWNLOAD CSV ---
 document.getElementById('downloadBtn').onclick = () => {
-    if (attendanceData.length === 0) return alert("No data to export!");
-
-    let csv = "Full Name,Matric Number,Timestamp\n";
-    attendanceData.forEach(row => {
-        csv += `"${row.name}","${row.matric}","${row.time}"\n`;
-    });
-
+    if (!attendanceData.length) return alert("No data!");
+    let csv = "Name,Matric,Time\n" + attendanceData.map(r => `"${r.name}","${r.matric}","${r.time}"`).join("\n");
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `Attendance_${currentSession || 'export'}.csv`;
-    a.click();
+    a.href = url; a.download = `Attendance_${currentSession}.csv`; a.click();
 };
 
-// --- ADMIN: CLEAR DATA ---
 document.getElementById('clearBtn').onclick = () => {
-    if (!currentSession) return alert("Please be on a specific class link to clear its data.");
-    
-    if (confirm(`Are you sure you want to delete ALL records for ${currentSession}?`)) {
+    if (currentSession && confirm("Delete ALL session records?")) {
         remove(ref(db, `sessions/${currentSession}/attendance`));
     }
 };
