@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getDatabase, ref, push, onValue, remove, keepSynced } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+import { getDatabase, ref, push, onValue, remove } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
 // --- FIREBASE CONFIGURATION ---
 const firebaseConfig = {
@@ -24,11 +24,9 @@ const targetLon = parseFloat(urlParams.get('lon'));
 const expiryTime = parseInt(urlParams.get('exp'));
 let attendanceData = [];
 
-// --- 1. OFFLINE PERSISTENCE ---
-// This ensures that even with poor data, the app caches locally and syncs later
+// --- 1. OFFLINE PERSISTENCE HELP ---
 if (currentSession) {
     const sessionRef = ref(db, `sessions/${currentSession}/attendance`);
-    // Note: In Web SDK, keeping a listener active enables basic local caching
     onValue(sessionRef, () => {}, { onlyOnce: false });
 }
 
@@ -61,7 +59,8 @@ document.getElementById('nav-btn').onclick = () => {
 };
 
 document.getElementById('loginBtn').onclick = () => {
-    if (document.getElementById('adminPass').value === "Mechatronics2024") {
+    const pass = document.getElementById('adminPass').value;
+    if (pass === "Mechatronics2024") {
         document.getElementById('admin-auth').classList.add('hidden');
         document.getElementById('admin-controls').classList.remove('hidden');
         if (currentSession) loadData(currentSession);
@@ -78,7 +77,7 @@ document.getElementById('genLinkBtn').onclick = () => {
         const sessionID = val.replace(/\s+/g, '_');
         const lat = pos.coords.latitude;
         const lon = pos.coords.longitude;
-        const exp = Date.now() + 3600000; // 60 minutes expiry for flexibility
+        const exp = Date.now() + 3600000; 
         
         const fullLink = `${window.location.origin}${window.location.pathname}?session=${sessionID}&lat=${lat}&lon=${lon}&exp=${exp}`;
         
@@ -88,45 +87,39 @@ document.getElementById('genLinkBtn').onclick = () => {
         document.getElementById('genLinkBtn').innerText = "Generate New Link";
         alert("Success! Hall Location Captured & Link Copied.");
     }, () => {
-        alert("GPS Error: Could not pin hall location.");
+        alert("GPS Error: Could not pin hall location. Enable GPS.");
         document.getElementById('genLinkBtn').innerText = "Generate New Link";
     }, { enableHighAccuracy: true });
 };
 
-// --- 4. STUDENT SUBMISSION (OFFLINE + SECURITY) ---
+// --- 4. STUDENT SUBMISSION ---
 document.getElementById('submitBtn').onclick = () => {
     const name = document.getElementById('studentName').value.trim();
     const matric = document.getElementById('matricNo').value.trim();
     const msg = document.getElementById('msg');
     const btn = document.getElementById('submitBtn');
     
-    // Safety Checks
     if (expiryTime && Date.now() > expiryTime) return alert("Session Expired!");
-    if (localStorage.getItem(`signed_${currentSession}`)) return alert("Already signed in on this device!");
+    if (localStorage.getItem(`signed_${currentSession}`)) return alert("Already signed in!");
     if (!name || !matric || !currentSession) return alert("Fill all fields!");
 
     btn.disabled = true;
     btn.innerText = "Processing...";
     msg.classList.remove('hidden');
     msg.innerHTML = "🛰️ Verifying Location...";
-    msg.className = "mt-4 p-4 rounded-xl text-center bg-blue-50 text-blue-700 block";
 
     navigator.geolocation.getCurrentPosition((pos) => {
         const dist = getDistance(pos.coords.latitude, pos.coords.longitude, targetLat, targetLon);
         
-        // 80m radius to account for thick concrete walls in lecture halls
         if (dist > 80) {
-            msg.innerHTML = `❌ Access Denied: You are ${dist}m away. Must be inside the hall.`;
+            msg.innerHTML = `❌ Access Denied: You are ${dist}m away.`;
             msg.className = "mt-4 p-4 rounded-xl text-center bg-red-100 text-red-700";
             btn.disabled = false;
             btn.innerText = "Submit Presence";
             return;
         }
 
-        msg.innerHTML = "📡 Syncing Attendance...";
-
         const sessionRef = ref(db, `sessions/${currentSession}/attendance`);
-        
         onValue(sessionRef, (snapshot) => {
             const records = snapshot.val();
             let isDuplicate = false;
@@ -135,7 +128,7 @@ document.getElementById('submitBtn').onclick = () => {
             }
 
             if (isDuplicate) {
-                msg.innerHTML = "❌ Matric Number already used for this session.";
+                msg.innerHTML = "❌ Matric already used.";
                 msg.className = "mt-4 p-4 rounded-xl text-center bg-red-100 text-red-700";
                 btn.disabled = false;
             } else {
@@ -143,18 +136,16 @@ document.getElementById('submitBtn').onclick = () => {
                 .then(() => {
                     localStorage.setItem(`signed_${currentSession}`, "true");
                     document.getElementById('form-container').classList.add('hidden');
-                    msg.innerHTML = "✅ Presence Verified & Logged!";
+                    msg.innerHTML = "✅ Presence Logged!";
                     msg.className = "mt-4 p-4 rounded-xl text-center bg-green-50 text-green-700";
                 })
                 .catch(() => {
-                    // This handles the background sync
-                    msg.innerHTML = "⚠️ Network Weak. Attendance cached and will sync automatically!";
-                    msg.className = "mt-4 p-4 rounded-xl text-center bg-yellow-50 text-yellow-700";
+                    msg.innerHTML = "⚠️ Network Weak. Syncing...";
                 });
             }
         }, { onlyOnce: true });
     }, () => {
-        msg.innerHTML = "📍 GPS Error: Please enable location and refresh.";
+        alert("GPS Error. Enable location.");
         btn.disabled = false;
     }, { enableHighAccuracy: true, timeout: 10000 });
 };
@@ -170,14 +161,12 @@ function loadData(sessionID) {
                 attendanceData.push(item);
                 list.innerHTML += `<tr class="border-b"><td class="p-4 font-bold text-gray-700">${item.name}</td><td class="p-4 font-mono text-blue-700">${item.matric}</td><td class="p-4 text-xs text-gray-400">${item.time}</td></tr>`;
             });
-        } else {
-            list.innerHTML = `<tr><td colspan="3" class="p-8 text-center text-gray-400">Waiting for submissions...</td></tr>`;
         }
     });
 }
 
 document.getElementById('downloadBtn').onclick = () => {
-    if (!attendanceData.length) return alert("No data to download!");
+    if (!attendanceData.length) return alert("No data!");
     let csv = "Name,Matric,Time\n" + attendanceData.map(r => `"${r.name}","${r.matric}","${r.time}"`).join("\n");
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -186,7 +175,7 @@ document.getElementById('downloadBtn').onclick = () => {
 };
 
 document.getElementById('clearBtn').onclick = () => {
-    if (currentSession && confirm("Permanently delete this class list?")) {
+    if (currentSession && confirm("Delete list?")) {
         remove(ref(db, `sessions/${currentSession}/attendance`));
     }
 };
